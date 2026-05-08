@@ -23,6 +23,8 @@ The architecture is modular and extensible, following patterns used in modern AI
 
 ## Demo
 
+<video src="assets/demo.mp4" controls width="800"></video>
+
 ### Main application view
 
 ![Main application view](assets/main_ui.jpg)
