@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import faiss
 import streamlit as st
@@ -11,6 +11,7 @@ import streamlit as st
 from rag.config import DATA_DIR
 from rag.indexing.builder import rebuild_knowledge_base
 from rag.orchestration.pipeline import ModularRAGPipeline
+from rag.observability.cost import estimate_cost_usd, estimate_tokens
 from rag.retrieval.sparse import build_tfidf_index
 from rag.utils.history import build_history
 from rag.utils.io import load_chunks, load_index
@@ -27,6 +28,19 @@ OPENAI_MODELS = ["gpt-4.1-mini", "gpt-4o-mini"]
 
 DEFAULT_FAISS_K = 20
 DEFAULT_TFIDF_K = 20
+
+STYLE_PATH = Path("assets/styles.css")
+
+
+class UIConfig(TypedDict):
+    mode: str
+    quality_label: str
+    generation_mode: str
+    llm_provider: str
+    llm_model: str
+    retrieval_mode: str
+    top_k: int
+    alpha: float
 
 
 @st.cache_resource(show_spinner=False)
@@ -47,272 +61,26 @@ def cached_build_tfidf_index(chunks: list[dict[str, Any]]) -> tuple[Any, Any]:
     return build_tfidf_index(chunks)
 
 
-def setup_page() -> None:
-    """Set page config and custom UI styles."""
-    st.set_page_config(page_title="Modular RAG Assistant", layout="wide")
+def load_css() -> None:
+    """Load custom Streamlit CSS."""
+    if not STYLE_PATH.exists():
+        return
 
     st.markdown(
-        """
-        <style>
-        .stApp {
-            background:
-                radial-gradient(circle at 18% 80%, rgba(0, 150, 170, 0.62), transparent 34%),
-                radial-gradient(circle at 62% 56%, rgba(58, 54, 92, 0.72), transparent 42%),
-                radial-gradient(circle at 86% 18%, rgba(210, 105, 35, 0.72), transparent 36%),
-                radial-gradient(circle at 82% 78%, rgba(132, 38, 84, 0.60), transparent 38%),
-                linear-gradient(135deg, #06111d 0%, #102333 32%, #21152a 62%, #30151f 100%);
-            background-attachment: fixed;
-        }
-
-        [data-testid="stHeader"],
-        [data-testid="stBottom"],
-        [data-testid="stBottom"] > div,
-        [data-testid="stBottomBlockContainer"],
-        [data-testid="stChatInputContainer"],
-        [data-testid="stChatInputContainer"] > div {
-            background: transparent !important;
-        }
-
-        .stApp,
-        .stMarkdown,
-        p,
-        span,
-        label,
-        div {
-            color: rgba(255, 255, 255, 0.92);
-        }
-
-        h1, h2, h3 {
-            color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #050b14 0%, #08131f 100%);
-            border-right: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        .sidebar-section-title {
-            font-size: 1.6rem !important;
-            font-weight: 800 !important;
-            letter-spacing: 0.2px;
-            margin-top: 1.25rem;
-            margin-bottom: 0.75rem;
-            color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        [data-testid="stChatMessage"] {
-            background: rgba(10, 18, 32, 0.32) !important;
-            backdrop-filter: blur(18px);
-            border: 1px solid rgba(255, 255, 255, 0.18);
-            border-radius: 14px;
-            padding: 14px;
-        }
-
-        [data-testid="stExpander"] {
-            background: rgba(10, 18, 32, 0.30) !important;
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.20) !important;
-            border-radius: 14px !important;
-        }
-
-        [data-testid="stExpander"] summary {
-            color: rgba(255, 255, 255, 0.95) !important;
-        }
-
-        [data-testid="stPopover"] button {
-            background: rgba(255, 255, 255, 0.10) !important;
-            color: rgba(255, 255, 255, 0.95) !important;
-            border: 1px solid rgba(255, 255, 255, 0.22) !important;
-            border-radius: 10px !important;
-            box-shadow: none !important;
-        }
-
-        [data-testid="stPopover"] button:hover {
-            background: rgba(255, 255, 255, 0.16) !important;
-            border-color: rgba(255, 255, 255, 0.32) !important;
-        }
-
-        div[data-baseweb="popover"] > div {
-            background: rgba(10, 18, 32, 0.94) !important;
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.18) !important;
-            border-radius: 14px !important;
-            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35) !important;
-        }
-
-        div[data-baseweb="popover"] * {
-            color: rgba(255, 255, 255, 0.92) !important;
-        }
-
-        [data-testid="stChatInput"] {
-            background: rgba(10, 18, 32, 0.34) !important;
-            backdrop-filter: blur(18px);
-            border: 1px solid rgba(255, 255, 255, 0.22);
-            border-radius: 14px;
-        }
-
-        [data-testid="stChatInput"] textarea {
-            color: white !important;
-            background: transparent !important;
-        }
-
-        [data-testid="stChatInput"] textarea::placeholder {
-            color: rgba(255, 255, 255, 0.55) !important;
-        }
-
-        [data-baseweb="select"] > div {
-            background: rgba(255, 255, 255, 0.08) !important;
-            color: white !important;
-            border-radius: 10px;
-        }
-
-        .stButton button {
-            background: rgba(255, 255, 255, 0.08) !important;
-            backdrop-filter: blur(15px);
-            color: white !important;
-            border: 1px solid rgba(255, 255, 255, 0.18);
-            border-radius: 12px;
-        }
-
-        .stButton button:hover {
-            background: rgba(255, 255, 255, 0.14) !important;
-            border-color: rgba(255, 255, 255, 0.28);
-        }
-
-        .stTextInput input {
-            background: rgba(255, 255, 255, 0.10) !important;
-            color: white !important;
-            border-radius: 10px;
-        }
-
-        .stTextInput input::placeholder {
-            color: rgba(255, 255, 255, 0.55) !important;
-        }
-
-        .kb-card {
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            border-radius: 14px;
-            background: rgba(10, 18, 32, 0.44);
-            padding: 12px;
-            margin-bottom: 10px;
-        }
-
-        .kb-title {
-            font-size: 13px;
-            font-weight: 700;
-            color: rgba(255, 255, 255, 0.95);
-            margin-bottom: 10px;
-        }
-
-        .kb-dropbox {
-            border: 1px dashed rgba(56, 189, 248, 0.35);
-            border-radius: 14px;
-
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(18, 24, 34, 0.75),
-                    rgba(10, 15, 24, 0.85)
-                );
-
-            text-align: center;
-            padding: 18px 10px 74px 10px;
-            min-height: 170px;
-
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .kb-icon {
-            width: 44px;
-            height: 44px;
-
-            border-radius: 50%;
-            margin-bottom: 10px;
-
-            display: flex;
-            align-items: center;
-            justify-content: center;
-
-            background: rgba(248,113,113,0.12);
-            border: 1px solid rgba(248,113,113,0.20);
-
-            color: #f87171;
-            font-size: 21px;
-        }
-
-        .kb-main {
-            font-size: 13px;
-            font-weight: 700;
-            color: rgba(255, 255, 255, 0.92);
-            line-height: 1.35;
-        }
-
-        .kb-main span {
-            color: #f87171;
-        }
-
-        .kb-sub {
-            margin-top: 5px;
-            color: rgba(255, 255, 255, 0.60);
-            font-size: 11px;
-        }
-
-        [data-testid="stFileUploader"] {
-            background: transparent !important;
-            border: none !important;
-            padding: 0 !important;
-            margin-top: -82px;
-            margin-bottom: 24px;
-            position: relative;
-            z-index: 10;
-        }
-
-        [data-testid="stFileUploader"] section {
-            background: transparent !important;
-            border: none !important;
-            padding: 0 !important;
-        }
-
-        [data-testid="stFileUploader"] section > div {
-            display: none !important;
-        }
-
-
-        [data-testid="stFileUploader"] button {
-
-            width: 72% !important;
-            margin-left: 14% !important;
-
-            background: rgba(15,23,42,0.75) !important;
-
-            color: white !important;
-
-            border:
-                1px solid rgba(56,189,248,0.25)
-                !important;
-
-                border-radius: 10px !important;
-                height: 40px !important;
-        }
-
-        [data-testid="stFileUploader"] button:hover {
-            background: rgba(255, 255, 255, 0.14) !important;
-            border-color: rgba(248, 113, 113, 0.55) !important;
-        }
-
-        .kb-saved-file {
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.66);
-            margin-top: -4px;
-            margin-bottom: 10px;
-        }
-        </style>
-        """,
+        f"<style>{STYLE_PATH.read_text(encoding='utf-8')}</style>",
         unsafe_allow_html=True,
     )
+
+
+def setup_page() -> None:
+    """Set page config and load custom UI styles."""
+    st.set_page_config(
+        page_title="Parrotly",
+        page_icon="𓅃",
+        layout="wide",
+    )
+
+    load_css()
 
 
 def init_session_state() -> None:
@@ -456,7 +224,7 @@ def handle_rebuild() -> None:
             st.error(f"Error while updating knowledge base: {exc}")
 
 
-def render_sidebar() -> dict[str, Any]:
+def render_sidebar() -> UIConfig:
     """Render sidebar settings."""
     with st.sidebar:
         render_section_title("Assistant settings")
@@ -681,8 +449,6 @@ def render_chat_mode(pipeline: ModularRAGPipeline, config: dict[str, Any]) -> No
                 )
 
             answer = st.write_stream(output["answer_stream"])
-
-            from rag.observability.cost import estimate_cost_usd, estimate_tokens
 
             output_tokens = estimate_tokens(answer)
             tokens["output"] = output_tokens

@@ -1,21 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+
 from api.schemas import AskRequest, AskResponse
 from rag.orchestration.pipeline import ModularRAGPipeline
 from rag.retrieval.sparse import build_tfidf_index
 from rag.utils.io import load_chunks, load_index
 
 
-app = FastAPI(
-    title="Modular RAG Assistant API",
-    version="1.0.0",
-)
-
-
-pipeline: ModularRAGPipeline | None = None
-
-
-def load_pipeline() -> ModularRAGPipeline:
-    """Build RAG pipeline."""
+def build_pipeline() -> ModularRAGPipeline:
+    """Build the RAG pipeline from saved retrieval artifacts."""
     index = load_index()
     chunks = load_chunks()
     vectorizer, tfidf_matrix = build_tfidf_index(chunks)
@@ -28,22 +22,35 @@ def load_pipeline() -> ModularRAGPipeline:
     )
 
 
-@app.on_event("startup")
-def startup() -> None:
-    """Load app resources."""
-    global pipeline
-    pipeline = load_pipeline()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load application resources on startup."""
+    app.state.pipeline = build_pipeline()
+    yield
+
+
+app = FastAPI(
+    title="Parrotly API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    """Check API status."""
+    """Return API health status."""
     return {"status": "ok"}
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(request: AskRequest) -> dict:
-    """Answer a RAG question."""
+def ask(request: AskRequest, fastapi_request: Request) -> dict:
+    """Answer a user question using the RAG pipeline."""
+    pipeline: ModularRAGPipeline | None = getattr(
+        fastapi_request.app.state,
+        "pipeline",
+        None,
+    )
+
     if pipeline is None:
         raise HTTPException(status_code=503, detail="Pipeline is not ready")
 
