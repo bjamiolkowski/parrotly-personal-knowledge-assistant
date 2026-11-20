@@ -8,13 +8,13 @@ from typing import Any, TypedDict
 import faiss
 import streamlit as st
 
-from rag.config import DATA_DIR
-from rag.indexing.builder import rebuild_knowledge_base
-from rag.orchestration.pipeline import ModularRAGPipeline
-from rag.observability.cost import estimate_cost_usd, estimate_tokens
-from rag.retrieval.sparse import build_tfidf_index
-from rag.utils.history import build_history
-from rag.utils.io import load_chunks, load_index
+from src.config import DATA_DIR
+from parrotly.indexing.knowledge_base import rebuild_knowledge_base
+from src.parrotly.orchestration.pipeline import ModularRAGPipeline
+from src.parrotly.observability.cost import estimate_cost_usd, estimate_tokens
+from src.parrotly.retrieval.sparse import build_tfidf_index
+from src.parrotly.utils.history import build_history
+from src.parrotly.utils.io import load_chunks, load_index
 
 
 QUALITY_MODE_MAP = {

@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from evaluation.test_cases import TEST_QUERIES
-from rag.orchestration.pipeline import ModularRAGPipeline
-from rag.retrieval.sparse import build_tfidf_index
-from rag.utils.io import load_chunks, load_index
+from src.parrotly.orchestration.pipeline import ModularRAGPipeline
+from src.parrotly.retrieval.sparse import build_tfidf_index
+from src.parrotly.utils.io import load_chunks, load_index
 
 
 RESULTS_DIR = Path("evaluation/results")

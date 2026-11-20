@@ -80,3 +80,4 @@ Thumbs.db
 # =========================
 evaluation/results/*
 !evaluation/results/.gitkeep
+*.egg-info/

@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 
 from api.schemas import AskRequest, AskResponse
-from rag.orchestration.pipeline import ModularRAGPipeline
-from rag.retrieval.sparse import build_tfidf_index
-from rag.utils.io import load_chunks, load_index
+from src.parrotly.orchestration.pipeline import ModularRAGPipeline
+from src.parrotly.retrieval.sparse import build_tfidf_index
+from src.parrotly.utils.io import load_chunks, load_index
 
 
 def build_pipeline() -> ModularRAGPipeline:
