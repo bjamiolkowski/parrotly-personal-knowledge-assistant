@@ -1,141 +1,63 @@
-"""Hybrid retrieval helpers."""
+"""
+Hybrid retrieval combining dense and sparse search.
 
-import numpy as np
+Uses Reciprocal Rank Fusion to merge FAISS and BM25 rankings.
+"""
 
-from src.parrotly.retrieval.dense import dense_search
-from src.parrotly.retrieval.sparse import sparse_search
+import faiss
+from langchain_community.retrievers import BM25Retriever
 
-
-def normalize_scores(score_list: list[tuple[int, float]]) -> dict[int, float]:
-    """Normalize scores to 0-1 range."""
-    if not score_list:
-        return {}
-
-    values = np.array([score for _, score in score_list], dtype=float)
-    min_score = values.min()
-    max_score = values.max()
-
-    if max_score - min_score < 1e-12:
-        return {idx: 1.0 for idx, _ in score_list}
-
-    return {
-        idx: (score - min_score) / (max_score - min_score)
-        for idx, score in score_list
-    }
-
-
-def build_result(
-    chunk: dict,
-    vector_score: float,
-    tfidf_score: float,
-    hybrid_score: float,
-) -> dict:
-    """Build retrieval result."""
-    return {
-        "source": chunk["source"],
-        "chunk_id": chunk["chunk_id"],
-        "text": chunk["text"],
-        "vector_score": float(vector_score),
-        "tfidf_score": float(tfidf_score),
-        "hybrid_score": float(hybrid_score),
-    }
+from parrotly.retrieval.dense import dense_search
+from parrotly.retrieval.sparse import sparse_search
 
 
 def hybrid_search(
     query: str,
-    index,
-    chunks: list[dict],
-    vectorizer,
-    tfidf_matrix,
+    index: faiss.Index,
+    sparse_retriever: BM25Retriever,
     top_k: int = 5,
-    faiss_k: int = 20,
-    tfidf_k: int = 20,
-    alpha: float = 0.6,
-) -> list[dict]:
-    """Run hybrid search."""
+    dense_k: int = 20,
+    rrf_k: int = 60,
+) -> list[tuple[int, float]]:
+    """Retrieve chunk indices ranked by reciprocal rank fusion."""
     if not query.strip():
-        return []
+        raise ValueError("Query cannot be empty.")
 
-    alpha = min(max(alpha, 0.0), 1.0)
+    if top_k <= 0 or dense_k <= 0 or rrf_k <= 0:
+        raise ValueError("Retrieval parameters must be greater than zero.")
 
-    dense_results = dense_search(query, index, top_n=faiss_k)
-    sparse_results = sparse_search(query, vectorizer, tfidf_matrix, top_n=tfidf_k)
+    if index.ntotal != len(sparse_retriever.docs):
+        raise ValueError("Dense and sparse indexes must contain the same chunks.")
 
-    dense_scores = normalize_scores(dense_results)
-    sparse_scores = normalize_scores(sparse_results)
+    dense_results = dense_search(query, index, top_k=dense_k)
+    sparse_results = sparse_search(query, sparse_retriever)
 
-    candidates = []
-    candidate_ids = set(dense_scores) | set(sparse_scores)
+    scores: dict[int, float] = {}
 
-    for idx in candidate_ids:
-        vector_score = dense_scores.get(idx, 0.0)
-        tfidf_score = sparse_scores.get(idx, 0.0)
-        hybrid_score = alpha * vector_score + (1 - alpha) * tfidf_score
-
-        candidates.append(
-            build_result(
-                chunk=chunks[idx],
-                vector_score=vector_score,
-                tfidf_score=tfidf_score,
-                hybrid_score=hybrid_score,
-            )
+    for rank, (chunk_index, _) in enumerate(dense_results, start=1):
+        scores[chunk_index] = scores.get(chunk_index, 0.0) + (
+            1.0 / (rrf_k + rank)
         )
 
-    candidates.sort(key=lambda item: item["hybrid_score"], reverse=True)
-    return candidates[:top_k]
+    for rank, document in enumerate(sparse_results, start=1):
+        if document.id is None:
+            raise ValueError("Sparse documents must have chunk indices as IDs.")
 
+        try:
+            chunk_index = int(document.id)
+        except ValueError as exc:
+            raise ValueError("Sparse document ID must be an integer.") from exc
 
-def retrieve_chunks(
-    query: str,
-    index,
-    chunks: list[dict],
-    vectorizer,
-    tfidf_matrix,
-    top_k: int = 5,
-    faiss_k: int = 20,
-    tfidf_k: int = 20,
-    alpha: float = 0.6,
-    mode: str = "hybrid",
-) -> list[dict]:
-    """Retrieve chunks."""
-    if not query.strip():
-        return []
+        if not 0 <= chunk_index < index.ntotal:
+            raise ValueError("Sparse document ID is outside the FAISS index.")
 
-    if mode == "hybrid":
-        return hybrid_search(
-            query=query,
-            index=index,
-            chunks=chunks,
-            vectorizer=vectorizer,
-            tfidf_matrix=tfidf_matrix,
-            top_k=top_k,
-            faiss_k=faiss_k,
-            tfidf_k=tfidf_k,
-            alpha=alpha,
+        scores[chunk_index] = scores.get(chunk_index, 0.0) + (
+            1.0 / (rrf_k + rank)
         )
 
-    if mode == "dense":
-        results = dense_search(query, index, top_n=top_k)
-        return [
-            build_result(
-                chunk=chunks[idx],
-                vector_score=score,
-                tfidf_score=0.0,
-                hybrid_score=score,
-            )
-            for idx, score in results
-        ]
+    ranked_results = sorted(
+        scores.items(),
+        key=lambda item: (-item[1], item[0]),
+    )
 
-    if mode == "sparse":
-        results = sparse_search(query, vectorizer, tfidf_matrix, top_n=top_k)
-        return [
-            build_result(
-                chunk=chunks[idx],
-                vector_score=0.0,
-                tfidf_score=score,
-                hybrid_score=score,
-            )
-            for idx, score in results
-        ]
-
-    raise ValueError(f"Unknown retrieval mode: {mode}")
+    return ranked_results[:top_k]

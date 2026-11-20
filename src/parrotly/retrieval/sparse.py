@@ -1,112 +1,60 @@
 """
-Sparse retrieval module using TF-IDF.
+Sparse retrieval using BM25.
 
-Provides keyword-based retrieval to complement semantic search.
+Provides keyword-based document retrieval to complement semantic search.
 """
 
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import re
+
+from langchain_community.retrievers import BM25Retriever
+from langchain_core.documents import Document
 
 
-def build_tfidf_index(chunks: list[dict]) -> tuple[TfidfVectorizer, np.ndarray]:
-    """
-    Build a TF-IDF index from document chunks.
-    """
-    texts = [chunk["text"] for chunk in chunks]
+def tokenize(text: str) -> list[str]:
+    """Tokenize text for BM25 indexing and retrieval."""
+    return re.findall(r"\b\w+\b", text.casefold())
 
-    vectorizer = TfidfVectorizer(
-        lowercase=True,
-        ngram_range=(1, 2),
-        token_pattern=r"(?u)\b\w+\b",
+
+def build_sparse_retriever(
+    chunks: list[Document],
+    top_k: int = 20,
+) -> BM25Retriever:
+    """Build a BM25 retriever from document chunks."""
+    if not chunks:
+        raise ValueError("Cannot build a BM25 retriever from empty chunks.")
+
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than zero.")
+
+    if any(not tokenize(chunk.page_content) for chunk in chunks):
+        raise ValueError("Document chunks must contain searchable text.")
+
+    return BM25Retriever.from_texts(
+        texts=[chunk.page_content for chunk in chunks],
+        metadatas=[chunk.metadata for chunk in chunks],
+        ids=[str(i) for i in range(len(chunks))],
+        preprocess_func=tokenize,
+        k=top_k,
     )
-
-    tfidf_matrix = vectorizer.fit_transform(texts)
-
-    return vectorizer, tfidf_matrix
 
 
 def sparse_search(
     query: str,
-    vectorizer: TfidfVectorizer,
-    tfidf_matrix,
-    top_n: int = 20,
-) -> list[tuple[int, float]]:
-    """
-    Retrieve relevant chunks using TF-IDF cosine similarity.
-    """
+    retriever: BM25Retriever,
+) -> list[Document]:
+    """Retrieve documents ranked by BM25."""
     if not query.strip():
+        raise ValueError("Query cannot be empty.")
+
+    query_terms = set(tokenize(query))
+
+    if not query_terms:
         return []
 
-    # Vectorize query
-    query_vec = vectorizer.transform([query])
+    results = retriever.invoke(query)
 
-    # Compute similarity
-    sims = cosine_similarity(query_vec, tfidf_matrix).flatten()
-
-    # Get top-N indices
-    top_indices = np.argsort(sims)[::-1][:top_n]
-
-    return [(int(idx), float(sims[idx])) for idx in top_indices]
-
-
-def retrieve_chunks(query: str, index,chunks: list[dict], vectorizer, tfidf_matrix, top_k: int = 5, faiss_k: int = 20,
-    tfidf_k: int = 20, alpha: float = 0.6, mode: str = "hybrid") -> list[dict]:
-    """
-    Retrieve chunks using selected retrieval mode:
-    - dense: FAISS only
-    - sparse: TF-IDF only
-    - hybrid: FAISS + TF-IDF
-    """
-    if not query.strip():
-        return []
-
-    if mode == "hybrid":
-        return hybrid_search(
-            query=query,
-            index=index,
-            chunks=chunks,
-            vectorizer=vectorizer,
-            tfidf_matrix=tfidf_matrix,
-            top_k=top_k,
-            faiss_k=faiss_k,
-            tfidf_k=tfidf_k,
-            alpha=alpha,
-        )
-
-    if mode == "dense":
-        dense_results = dense_search(query, index, top_n=top_k)
-
-        return [
-            {
-                "source": chunks[idx]["source"],
-                "chunk_id": chunks[idx]["chunk_id"],
-                "text": chunks[idx]["text"],
-                "vector_score": float(score),
-                "tfidf_score": 0.0,
-                "hybrid_score": float(score),
-            }
-            for idx, score in dense_results
-        ]
-
-    if mode == "sparse":
-        sparse_results = sparse_search(
-            query=query,
-            vectorizer=vectorizer,
-            tfidf_matrix=tfidf_matrix,
-            top_n=top_k,
-        )
-
-        return [
-            {
-                "source": chunks[idx]["source"],
-                "chunk_id": chunks[idx]["chunk_id"],
-                "text": chunks[idx]["text"],
-                "vector_score": 0.0,
-                "tfidf_score": float(score),
-                "hybrid_score": float(score),
-            }
-            for idx, score in sparse_results
-        ]
-
-    raise ValueError(f"Unknown retrieval mode: {mode}")
+    return [
+        document
+        for document in results
+        if not query_terms.isdisjoint(tokenize(document.page_content))
+    ]
