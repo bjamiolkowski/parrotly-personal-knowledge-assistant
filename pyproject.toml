@@ -5,20 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "parrotly-personal-knowledge-assistant"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 dependencies = [
-    "langchain-community",
-    "rank-bm25",
-    "sentence-transformers",
+    "faiss-cpu>=1.16,<2",
+    "langchain-core>=1.8,<2",
+    "langchain-community==0.4.2",
+    "langchain-ollama>=1.1,<2",
+    "langchain-text-splitters>=1.1,<2",
+    "numpy>=1.26,<3",
+    "pypdf>=6,<8",
+    "python-dotenv>=1,<2",
+    "rank-bm25==0.2.2",
+    "sentence-transformers>=6.3,<7",
+    "streamlit>=1.66,<2",
+    "fastapi>=0.165,<1",
+    "uvicorn>=0.46,<1",
 ]
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = ["--import-mode=importlib"]
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "pandas>=2,<3",
+    "scikit-learn>=1.5,<2",
+]
